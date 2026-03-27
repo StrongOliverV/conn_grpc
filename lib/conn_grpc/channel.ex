@@ -101,6 +101,10 @@ defmodule ConnGRPC.Channel do
     * `:backoff_module` - Backoff module to be used (default: `ConnGRPC.Backoff.Exponential`).
     If you'd like to implement your own backoff, see the `ConnGRPC.Backoff` behavior.
 
+    * `:connect_jitter` - Maximum random delay in milliseconds before the initial connection.
+    Useful to stagger connections and avoid thundering herd on server-initiated reconnects (e.g. HTTP/2 GOAWAY).
+    Default: `0` (no jitter).
+
     * `:debug` - Write debug logs (default: `false`)
 
     * `:on_connect` - Function to run on connect (0-arity)
