@@ -158,6 +158,10 @@ defmodule ConnGRPC.Pool do
 
     * `:channel` - Channel configuration, such as address, connection options, backoff, and callbacks.
     For all options, see `ConnGRPC.Channel.start_link/1`
+
+    * `:connect_jitter` - Maximum random delay in milliseconds before each channel's
+    initial connection. Useful to stagger connections and avoid thundering herd on
+    server-initiated reconnects (e.g. HTTP/2 GOAWAY). Default: `0` (no jitter).
   """
   def start_link(opts) do
     Supervisor.start_link(__MODULE__, opts, name: opts[:name])
@@ -234,10 +238,13 @@ defmodule ConnGRPC.Pool do
     pool_name = Keyword.fetch!(opts, :name)
     pool_size = Keyword.fetch!(opts, :pool_size)
     channel_opts = Keyword.fetch!(opts, :channel)
+    connect_jitter = Keyword.get(opts, :connect_jitter, 0)
     telemetry_interval = Keyword.get(opts, :telemetry_interval, @telemetry_interval)
     registry_name = registry(pool_name)
 
     build_ets_table(pool_name)
+
+    channel_opts = Keyword.put(channel_opts, :connect_jitter, connect_jitter)
 
     children = [
       {Registry, name: registry_name, keys: :duplicate},

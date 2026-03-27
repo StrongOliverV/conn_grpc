@@ -148,6 +148,7 @@ defmodule ConnGRPC.Channel do
         address: Keyword.fetch!(options, :address) || "",
         opts: Keyword.get(options, :opts, [])
       },
+      connect_jitter: Keyword.get(options, :connect_jitter, 0),
       debug: Keyword.get(options, :debug, false),
       mock: Keyword.get(options, :mock),
       name: Keyword.get(options, :name),
@@ -159,7 +160,16 @@ defmodule ConnGRPC.Channel do
 
     state = initialize_backoff(state)
 
-    {:ok, state, {:continue, :connect}}
+    case Keyword.get(options, :connect_jitter, 0) do
+      0 ->
+        {:ok, state, {:continue, :connect}}
+
+      max_jitter ->
+        jitter = :rand.uniform(max_jitter)
+        debug(state, "Delaying initial connection by #{jitter}ms")
+        Process.send_after(self(), :connect, jitter)
+        {:ok, state}
+    end
   end
 
   defp initialize_backoff(state) do
@@ -284,8 +294,16 @@ defmodule ConnGRPC.Channel do
   defp schedule_retry(state) do
     state = clear_timer(state)
     {retry_delay, state} = increment_backoff(state)
-    retry_timer_ref = Process.send_after(self(), :connect, retry_delay)
-    debug(state, "Retrying in #{retry_delay}ms")
+
+    jitter =
+      case state.connect_jitter do
+        0 -> 0
+        max -> :rand.uniform(max)
+      end
+
+    total_delay = retry_delay + jitter
+    retry_timer_ref = Process.send_after(self(), :connect, total_delay)
+    debug(state, "Retrying in #{total_delay}ms (backoff: #{retry_delay}ms, jitter: #{jitter}ms)")
     %{state | retry_timer_ref: retry_timer_ref}
   end
 
