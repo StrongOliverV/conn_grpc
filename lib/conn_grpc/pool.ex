@@ -115,13 +115,13 @@ defmodule ConnGRPC.Pool do
   defmacro __using__(use_opts \\ []) do
     quote do
       @doc "Returns a gRPC channel from the pool"
-      @spec get_channel() ::
+      @spec get_channel(keyword()) ::
               {:ok, GRPC.Channel.t()} | {:error, :not_connected} | {:error, :not_started}
-      def get_channel, do: ConnGRPC.Pool.get_channel(__MODULE__)
+      def get_channel(opts \\ []), do: ConnGRPC.Pool.get_channel(__MODULE__, opts)
 
       @doc "Returns a gRPC channel from the pool, raising on error"
-      @spec get_channel!() :: GRPC.Channel.t()
-      def get_channel!, do: ConnGRPC.Pool.get_channel!(__MODULE__)
+      @spec get_channel!(keyword()) :: GRPC.Channel.t()
+      def get_channel!(opts \\ []), do: ConnGRPC.Pool.get_channel!(__MODULE__, opts)
 
       @doc "Returns all pids on the pool"
       @spec get_all_pids() :: [pid()]
@@ -167,10 +167,27 @@ defmodule ConnGRPC.Pool do
     Supervisor.start_link(__MODULE__, opts, name: opts[:name])
   end
 
-  @doc "Returns a gRPC channel from the pool"
-  @spec get_channel(module | atom) ::
+  @poll_interval 100
+
+  @doc """
+  Returns a gRPC channel from the pool.
+
+  ### Options
+
+    * `:timeout` - Maximum time in milliseconds to wait for a channel to become
+      available. When set, the function will poll until a connected channel is
+      found or the timeout is exceeded. Default: `0` (no waiting).
+  """
+  @spec get_channel(module | atom, keyword()) ::
           {:ok, GRPC.Channel.t()} | {:error, :not_connected} | {:error, :not_started}
-  def get_channel(pool_name) do
+  def get_channel(pool_name, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 0)
+    deadline = System.monotonic_time(:millisecond) + timeout
+
+    do_get_channel_with_timeout(pool_name, deadline, timeout > 0)
+  end
+
+  defp do_get_channel_with_timeout(pool_name, deadline, wait?) do
     if registry_alive?(pool_name) do
       start = System.monotonic_time()
       channels = Registry.lookup(registry(pool_name), :channels)
@@ -183,15 +200,39 @@ defmodule ConnGRPC.Pool do
           {:error, :not_connected}
         end
 
-      :telemetry.execute(
-        [:conn_grpc, :pool, :get_channel],
-        %{duration: System.monotonic_time() - start},
-        %{pool_name: pool_name}
-      )
+      case result do
+        {:error, :not_connected} when wait? ->
+          remaining = deadline - System.monotonic_time(:millisecond)
 
-      result
+          if remaining > 0 do
+            Process.sleep(min(@poll_interval, remaining))
+            do_get_channel_with_timeout(pool_name, deadline, true)
+          else
+            :telemetry.execute(
+              [:conn_grpc, :pool, :get_channel],
+              %{duration: System.monotonic_time() - start},
+              %{pool_name: pool_name}
+            )
+
+            result
+          end
+
+        _ ->
+          :telemetry.execute(
+            [:conn_grpc, :pool, :get_channel],
+            %{duration: System.monotonic_time() - start},
+            %{pool_name: pool_name}
+          )
+
+          result
+      end
     else
-      {:error, :not_started}
+      if wait? and deadline - System.monotonic_time(:millisecond) > 0 do
+        Process.sleep(@poll_interval)
+        do_get_channel_with_timeout(pool_name, deadline, true)
+      else
+        {:error, :not_started}
+      end
     end
   end
 
@@ -201,9 +242,9 @@ defmodule ConnGRPC.Pool do
   end
 
   @doc "Returns a gRPC channel from the pool, raising on error"
-  @spec get_channel!(module | atom) :: GRPC.Channel.t()
-  def get_channel!(pool_name) do
-    case get_channel(pool_name) do
+  @spec get_channel!(module | atom, keyword()) :: GRPC.Channel.t()
+  def get_channel!(pool_name, opts \\ []) do
+    case get_channel(pool_name, opts) do
       {:ok, channel} ->
         channel
 
