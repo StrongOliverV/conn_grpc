@@ -101,6 +101,10 @@ defmodule ConnGRPC.Channel do
     * `:backoff_module` - Backoff module to be used (default: `ConnGRPC.Backoff.Exponential`).
     If you'd like to implement your own backoff, see the `ConnGRPC.Backoff` behavior.
 
+    * `:connect_jitter` - Maximum random delay in milliseconds before the initial connection.
+    Useful to stagger connections and avoid thundering herd on server-initiated reconnects (e.g. HTTP/2 GOAWAY).
+    Default: `0` (no jitter).
+
     * `:debug` - Write debug logs (default: `false`)
 
     * `:on_connect` - Function to run on connect (0-arity)
@@ -117,7 +121,7 @@ defmodule ConnGRPC.Channel do
   end
 
   @doc "Returns the gRPC channel"
-  @spec get(atom | pid) :: {:ok, GRPC.Channel.t()} | {:error, :not_connected}
+  @spec get(atom | pid) :: {:ok, %GRPC.Channel{}} | {:error, :not_connected}
   def get(channel, opts \\ []) do
     start = System.monotonic_time()
 
@@ -148,6 +152,7 @@ defmodule ConnGRPC.Channel do
         address: Keyword.fetch!(options, :address) || "",
         opts: Keyword.get(options, :opts, [])
       },
+      connect_jitter: Keyword.get(options, :connect_jitter, 0),
       debug: Keyword.get(options, :debug, false),
       mock: Keyword.get(options, :mock),
       name: Keyword.get(options, :name),
@@ -159,7 +164,16 @@ defmodule ConnGRPC.Channel do
 
     state = initialize_backoff(state)
 
-    {:ok, state, {:continue, :connect}}
+    case Keyword.get(options, :connect_jitter, 0) do
+      0 ->
+        {:ok, state, {:continue, :connect}}
+
+      max_jitter ->
+        jitter = :rand.uniform(max_jitter)
+        debug(state, "Delaying initial connection by #{jitter}ms")
+        Process.send_after(self(), :connect, jitter)
+        {:ok, state}
+    end
   end
 
   defp initialize_backoff(state) do
@@ -284,8 +298,16 @@ defmodule ConnGRPC.Channel do
   defp schedule_retry(state) do
     state = clear_timer(state)
     {retry_delay, state} = increment_backoff(state)
-    retry_timer_ref = Process.send_after(self(), :connect, retry_delay)
-    debug(state, "Retrying in #{retry_delay}ms")
+
+    jitter =
+      case state.connect_jitter do
+        0 -> 0
+        max -> :rand.uniform(max)
+      end
+
+    total_delay = retry_delay + jitter
+    retry_timer_ref = Process.send_after(self(), :connect, total_delay)
+    debug(state, "Retrying in #{total_delay}ms (backoff: #{retry_delay}ms, jitter: #{jitter}ms)")
     %{state | retry_timer_ref: retry_timer_ref}
   end
 
@@ -326,7 +348,7 @@ defmodule ConnGRPC.Channel do
   defmacro __using__(use_opts \\ []) do
     quote do
       @doc "Returns the gRPC channel"
-      @spec get() :: {:ok, GRPC.Channel.t()} | {:error, :not_connected}
+      @spec get() :: {:ok, %GRPC.Channel{}} | {:error, :not_connected}
       def get, do: ConnGRPC.Channel.get(__MODULE__)
 
       def child_spec(opts) do
