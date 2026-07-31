@@ -121,7 +121,7 @@ defmodule ConnGRPC.Channel do
   end
 
   @doc "Returns the gRPC channel"
-  @spec get(atom | pid) :: {:ok, GRPC.Channel.t()} | {:error, :not_connected}
+  @spec get(atom | pid) :: {:ok, %GRPC.Channel{}} | {:error, :not_connected}
   def get(channel, opts \\ []) do
     start = System.monotonic_time()
 
@@ -348,7 +348,7 @@ defmodule ConnGRPC.Channel do
   defmacro __using__(use_opts \\ []) do
     quote do
       @doc "Returns the gRPC channel"
-      @spec get() :: {:ok, GRPC.Channel.t()} | {:error, :not_connected}
+      @spec get() :: {:ok, %GRPC.Channel{}} | {:error, :not_connected}
       def get, do: ConnGRPC.Channel.get(__MODULE__)
 
       def child_spec(opts) do

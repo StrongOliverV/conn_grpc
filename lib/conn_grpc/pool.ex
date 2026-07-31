@@ -116,11 +116,11 @@ defmodule ConnGRPC.Pool do
     quote do
       @doc "Returns a gRPC channel from the pool"
       @spec get_channel(keyword()) ::
-              {:ok, GRPC.Channel.t()} | {:error, :not_connected} | {:error, :not_started}
+              {:ok, %GRPC.Channel{}} | {:error, :not_connected} | {:error, :not_started}
       def get_channel(opts \\ []), do: ConnGRPC.Pool.get_channel(__MODULE__, opts)
 
       @doc "Returns a gRPC channel from the pool, raising on error"
-      @spec get_channel!(keyword()) :: GRPC.Channel.t()
+      @spec get_channel!(keyword()) :: %GRPC.Channel{}
       def get_channel!(opts \\ []), do: ConnGRPC.Pool.get_channel!(__MODULE__, opts)
 
       @doc "Returns all pids on the pool"
@@ -179,7 +179,7 @@ defmodule ConnGRPC.Pool do
       found or the timeout is exceeded. Default: `0` (no waiting).
   """
   @spec get_channel(module | atom, keyword()) ::
-          {:ok, GRPC.Channel.t()} | {:error, :not_connected} | {:error, :not_started}
+          {:ok, %GRPC.Channel{}} | {:error, :not_connected} | {:error, :not_started}
   def get_channel(pool_name, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 0)
     deadline = System.monotonic_time(:millisecond) + timeout
@@ -242,7 +242,7 @@ defmodule ConnGRPC.Pool do
   end
 
   @doc "Returns a gRPC channel from the pool, raising on error"
-  @spec get_channel!(module | atom, keyword()) :: GRPC.Channel.t()
+  @spec get_channel!(module | atom, keyword()) :: %GRPC.Channel{}
   def get_channel!(pool_name, opts \\ []) do
     case get_channel(pool_name, opts) do
       {:ok, channel} ->
